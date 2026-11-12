@@ -44,7 +44,7 @@ try {
     Assert ((Test-Path -LiteralPath (Join-Path $game 'd3d9.dll'))) 'DLL was not installed'
     $ini = [System.IO.File]::ReadAllText((Join-Path $game 'mw3ncp_config.ini'))
     $dxvk = [System.IO.File]::ReadAllText((Join-Path $game 'dxvk.conf'))
-    foreach ($expected in @('GraphicsApi=Vulkan', 'StreamlineEnabled=1', 'InternalRenderScalePercent=67',
+    foreach ($expected in @('GraphicsApi=Vulkan', 'StreamlineEnabled=1', 'UseCustomOptionsScreen=1', 'InternalRenderScalePercent=67',
         'TextureRenderRes=1x', 'FsrSharpenEnabled=0', 'MotionBlurEnabled=0',
         'DLSSModeX64=3', 'DlssNeuralRenderingEnabled=0', 'UnknownKey=preserve')) {
         Assert ($ini.Contains($expected)) "Missing INI setting $expected"
@@ -57,10 +57,12 @@ try {
     & $script -GameDir $game -FourKCheckOnly | Out-Null
     $isolated = [System.IO.File]::ReadAllText((Join-Path $game 'mw3ncp_config.ini'))
     Assert ($isolated.Contains('StreamlineEnabled=0')) '4K-only test must turn off DLSS'
+    Assert ($isolated.Contains('UseCustomOptionsScreen=0')) '4K-only test should preserve native Options menu'
     Assert ($isolated.Contains('GraphicsApi=Vulkan')) '4K-only test must retain Vulkan'
     & $script -GameDir $game | Out-Null
     $enabledAgain = [System.IO.File]::ReadAllText((Join-Path $game 'mw3ncp_config.ini'))
     Assert ($enabledAgain.Contains('StreamlineEnabled=1')) 'DLSS profile did not re-enable NVIDIA Streamline'
+    Assert ($enabledAgain.Contains('UseCustomOptionsScreen=1')) 'DLSS mode did not re-enable Advanced Video Options'
 
     Write-Host 'PASS: release architecture, dry run, rollback backups, DXVK mode option, DLSS profile, preservation.'
 }
