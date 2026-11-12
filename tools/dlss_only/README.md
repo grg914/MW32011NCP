@@ -81,6 +81,45 @@ d'environnement avant le chargement DXVK, sans dépendre du dossier
 de travail. Les deux solutions n'ont pas encore été validées sur
 la machine de l'utilisateur.
 
+## Sélecteur DLSS intégré au menu du jeu
+
+La branche ajoute une **vraie ligne DLSS Super Resolution** dans le
+menu personnalisé existant du jeu : **Options > Advanced Video**,
+campagne x64 uniquement. Le menu existe déjà dans le mod ; pour y
+accéder, la configuration active [Options] UseCustomOptionsScreen=1
+(installateur sans -FourKCheckOnly).
+
+Modes accessibles avec gauche/droite ou souris :
+
+| Dans le menu | sl::DLSSMode | Échelle interne (%) | Sortie écran |
+|---|---:|---:|---|
+| Off | 0, Streamline arrêté | 100 | native |
+| Quality | 3 | 67 | résolution du jeu (4K) |
+| Balanced | 2 | 58 | résolution du jeu (4K) |
+| Performance | 1 | 50 | résolution du jeu (4K) |
+| Ultra Performance | 4 | 33 | résolution du jeu (4K) |
+| DLAA | 6 | 100 | native, anti-aliasing |
+
+Tous les changements sont sauvegardés dans mw3ncp_config.ini,
+et affichent « (restart) » sur la ligne. **Quitter MW3 puis le
+relancer complètement** : ni un vid_restart ni un simple changement
+de carte ne rechargent l'interposeur Streamline et les render targets.
+Le choix du mode n'altère pas le paramètre r_mode de MW3 et ne modifie
+jamais le mode du bureau Windows.
+
+**La DLL v0.0.3-x64 publique n'a PAS cette nouvelle ligne.**
+Pour tester le menu, compiler la DLL depuis cette branche en
+conservant les dépendances DXVK/Streamline compatibles et installer
+la DLL compilée à la place du proxy officiel. Le script peut appliquer
+les paramètres avec l'ancien proxy mais **ne peut pas ajouter une
+ligne de menu à un binaire non recompilé**. Le site Actions signale
+les tests de compilation/syntaxe ; leur succès n'est pas une
+validation du fonctionnement du menu sur une vraie carte RTX.
+
+**DLSS 5 Neural Rendering ne figure pas dans ce menu** : aucune
+évaluation DLSS NR n'est intégrée et le SDK privé correspondant
+n'est pas distribué.
+
 ## Si 4K est encore absente
 
 - Windows doit être réellement en 3840×2160.
