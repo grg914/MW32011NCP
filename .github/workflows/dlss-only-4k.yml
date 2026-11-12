@@ -1,0 +1,39 @@
+name: Validate DLSS-only native 4K compatibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "proxy_d3d9/src/dllmain.cpp"
+      - "proxy_d3d9/src/d3d9_hook.cpp"
+      - "tools/dlss_only/**"
+      - ".github/workflows/dlss-only-4k.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-msvc-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Syntax check modified proxy units (no graphics installation needed)
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\d3d9_hook.cpp"
+          cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\dllmain.cpp"
+
+  test-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dry-run, archive validation, backup and INI smoke test
+        shell: pwsh
+        run: |
+          & .\tools\dlss_only\test_install.ps1
