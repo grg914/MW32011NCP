@@ -567,10 +567,23 @@ bool TryLoadVendoredDxvk()
             char slInterposerPath[MAX_PATH];
             sprintf_s(slInterposerPath, "%ssl.interposer.dll", slDir);
             SetEnvironmentVariableA("DXVK_VULKAN_LOADER_OVERRIDE", slInterposerPath);
-            SetEnvironmentVariableA("DXVK_CONFIG", "dxvk.enableNvCudaInteropNative=True");
+            // MW3/DXVK 4K display-mode compatibility, DLSS-focused branch:
+            // IW5 can truncate D3D9 mode lists on this x64 build; a 4K desktop
+            // may then disappear from the menu and the engine falls back to
+            // 640x480. DXVK already provides a compatibility mode that retains
+            // the current desktop mode plus a bounded fallback list (see
+            // dxvk/src/d3d9/d3d9_adapter.cpp::FilterModesByFormat).
+            // Apply ONLY when Streamline/DLSS is explicitly requested; the
+            // vanilla D3D9 path and ordinary Vulkan sessions are untouched.
+            // DXVK_CONFIG is semicolon-separated per Config::getUserConfig().
+            // Do not force an arbitrary 3840x2160 mode: the actual Windows
+            // desktop mode determines which resolution is retained.
+            SetEnvironmentVariableA("DXVK_CONFIG",
+                "dxvk.enableNvCudaInteropNative=True; d3d9.modeCountCompatibility=True");
             char buf[500];
             sprintf_s(buf, "[graphics-api] StreamlineEnabled=1 -- DXVK_VULKAN_LOADER_OVERRIDE set to "
-                "'%s', DXVK_CONFIG set to enable the NVX CUDA interop extensions DLSS needs.",
+                "'%s', DXVK_CONFIG set for NVX CUDA interop + D3D9 desktop-mode compatibility "
+                "(4K/1440p display-list fix, no forced resolution).",
                 slInterposerPath);
             Log(buf);
         } else {
