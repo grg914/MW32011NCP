@@ -7,6 +7,9 @@
 param(
     [Parameter(Mandatory=$true)][string]$GameDir,
     [Parameter(Mandatory=$true)][string]$BuiltDllZip,
+    # Optional: replace the four embedded NVIDIA Streamline DLLs with a newer
+    # matching signed x64 runtime from the user's own extracted SDK folder.
+    [string]$StreamlineRuntimeDir,
     [switch]$DryRun
 )
 Set-StrictMode -Version Latest
@@ -22,13 +25,24 @@ if ([System.IO.Path]::GetFileName($zip) -notlike '*dlss-menu-code-only*') {
     Write-Warning 'ZIP filename is unexpected. Use the code-only artifact from the PR #3 GitHub Actions Build workflow.'
 }
 $runtime = Join-Path $env:LOCALAPPDATA 'MW32011NCP\runtime_x64'
+$streamlineSource = if ($StreamlineRuntimeDir) {
+    (Resolve-Path -LiteralPath $StreamlineRuntimeDir -ErrorAction Stop).ProviderPath
+} else {
+    Join-Path $runtime 'streamline'
+}
+if (-not (Test-Path -LiteralPath $streamlineSource -PathType Container)) {
+    throw "Streamline source directory missing: $streamlineSource"
+}
+# All NVIDIA DLLs must come from ONE compatible Streamline release.
+# Do not mix the 2.14.1 interposer with an unrelated 2.14.16 plugin.
 $vendor = @(
     @{ Id = 110; Path = (Join-Path $runtime 'dxvk\d3d9.dll'); Name='DXVK D3D9' },
-    @{ Id = 111; Path = (Join-Path $runtime 'streamline\sl.interposer.dll'); Name='NVIDIA Streamline interposer' },
-    @{ Id = 112; Path = (Join-Path $runtime 'streamline\sl.common.dll'); Name='NVIDIA Streamline common' },
-    @{ Id = 113; Path = (Join-Path $runtime 'streamline\sl.dlss.dll'); Name='NVIDIA Streamline DLSS' },
-    @{ Id = 114; Path = (Join-Path $runtime 'streamline\nvngx_dlss.dll'); Name='NVIDIA NGX DLSS' }
+    @{ Id = 111; Path = (Join-Path $streamlineSource 'sl.interposer.dll'); Name='NVIDIA Streamline interposer' },
+    @{ Id = 112; Path = (Join-Path $streamlineSource 'sl.common.dll'); Name='NVIDIA Streamline common' },
+    @{ Id = 113; Path = (Join-Path $streamlineSource 'sl.dlss.dll'); Name='NVIDIA Streamline DLSS' },
+    @{ Id = 114; Path = (Join-Path $streamlineSource 'nvngx_dlss.dll'); Name='NVIDIA NGX DLSS' }
 )
+$streamlineVersions = @()
 foreach ($item in $vendor) {
     if (-not (Test-Path -LiteralPath $item.Path -PathType Leaf)) {
         throw "Missing $($item.Name): $($item.Path). Launch the official mod with StreamlineEnabled=1 once, exit, then retry."
@@ -47,8 +61,18 @@ foreach ($item in $vendor) {
             throw "NVIDIA signature invalid or missing: $($item.Path) ($($auth.Status)). Do not disable signature checks."
         }
     }
-    Write-Host "$($item.Name): $($item.Path), $([Math]::Round($bytes / 1MB, 1)) MB"
+    $info = (Get-Item -LiteralPath $item.Path).VersionInfo
+    Write-Host "$($item.Name): $($item.Path), version $($info.FileVersion), $([Math]::Round($bytes / 1MB, 1)) MB"
+    if ($item.Id -in @(111,112,113)) {
+        $streamlineVersions += $info.FileVersion
+    }
 }
+if (@($streamlineVersions | Select-Object -Unique).Count -ne 1) {
+    throw 'sl.interposer.dll, sl.common.dll and sl.dlss.dll must be from the SAME Streamline SDK release/version.'
+}
+Write-Host "NVIDIA Streamline SDK: $($streamlineVersions[0])"
+Write-Host 'The files sl.dlss_nr.dll and nvngx_dlssnr.dll are deliberately NOT loaded: DLSS 5 is not implemented.'
+
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('mw3-dlss-menu-stage-' + [Guid]::NewGuid().ToString('N'))
 $dest = Join-Path $game 'd3d9.dll'
 $ini = Join-Path $game 'mw3ncp_config.ini'
