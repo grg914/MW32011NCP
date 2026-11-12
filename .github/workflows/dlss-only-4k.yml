@@ -35,6 +35,19 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Parse runtime update and in-game-menu packaging scripts (Windows PowerShell syntax)
+        shell: pwsh
+        run: |
+          foreach ($path in @('.\\tools\\dlss_only\\update_streamline_runtime.ps1', '.\\tools\\dlss_only\\install_menu_from_ci.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | Format-List | Out-String | Write-Host
+              throw "PowerShell syntax errors in $path"
+            }
+            Write-Host "PASS parse: $path"
+          }
       - name: Dry-run, archive validation, backup and INI smoke test
         shell: pwsh
         run: |
