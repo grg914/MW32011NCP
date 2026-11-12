@@ -57,10 +57,15 @@ pipeline graphique existant.
 
     powershell -NoProfile -File .\tools\dlss_only\install_dlss_only.ps1 -GameDir "D:\SteamLibrary\steamapps\common\Call of Duty Modern Warfare 3" -ReleaseZip "$env:USERPROFILE\Downloads\MW32011NCP-v0.0.3-x64.zip" -DryRun
 
-5. Si les chemins sont exacts, retirer -DryRun pour installer.
-   Le script sauvegarde les fichiers préexistants et n'écrit
-   jamais dans iw5sp.exe, dans le registre ni dans config.cfg.
-6. Relancer le jeu et vérifier la résolution de sortie puis le DLSS.
+5. Si les chemins sont exacts, retirer -DryRun et ajouter
+   -FourKCheckOnly pour installer en **Vulkan sans DLSS**. Le test vérifie
+   d'abord si le menu propose à nouveau 3840×2160 ; conserver la
+   résolution et quitter le jeu.
+6. Ensuite relancer le même script **sans -FourKCheckOnly** :
+   StreamlineEnabled passe à 1 et DLSS Qualité est demandé. Le script
+   sauvegarde les fichiers préexistants et n'écrit jamais dans iw5sp.exe,
+   dans le registre ni dans config.cfg.
+7. Relancer la campagne et mesurer réellement le résultat 4K + DLSS.
    Ne pas utiliser vid_restart ; quitter et relancer entièrement.
 
 Paramètres : GraphicsApi=Vulkan, StreamlineEnabled=1,
