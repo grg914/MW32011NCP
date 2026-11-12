@@ -93,12 +93,20 @@ try {
             DLSSModeX64 = '3'
             DlssNeuralRenderingEnabled = '0'
         }
+        Options = [ordered]@{
+            # Enables the mod's existing in-game Options tabs. The new
+            # Advanced Video DLSS selector is in the separately built DLL
+            # from this branch; the published v0.0.3-x64 ZIP lacks that row.
+            # Keep the stock Options menu for the 4K-only diagnostic.
+            UseCustomOptionsScreen = $(if ($FourKCheckOnly) { '0' } else { '1' })
+        }
     }
 
     Write-Host "MW3 folder: $root"
     Write-Host "DLSS Quality, render scale $RenderScalePercent%, DXVK desktop-mode compatibility."
     if ($FourKCheckOnly) { Write-Host '4K check only: DLSS disabled for this boot; test the 4K display list first.' }
     Write-Host 'Windows output resolution is not changed; DLSS 5 is NOT implemented.'
+    Write-Warning 'The published v0.0.3-x64 DLL does not contain the new in-game DLSS selector. Build this branch to display that menu row.'
     if ($DryRun) {
         Write-Host 'DryRun complete: no game file was changed.'
         return
