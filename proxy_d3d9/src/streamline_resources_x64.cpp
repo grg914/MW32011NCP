@@ -1371,8 +1371,20 @@ void GetDlssTaggedImagesX64(DlssTaggedImageX64& inputColor, DlssTaggedImageX64& 
 void ProbeUltraRenderTargetsX64()
 {
     static bool s_reported = false;
+    static uint32_t s_pending = 0;
     if (s_reported || !IsStreamlineInitializedX64()) return;
-    if (!g_frameSceneColorSurfaceX64 || !g_frameSceneDepthSurfaceX64) return;
+    if (!g_frameSceneColorSurfaceX64 || !g_frameSceneDepthSurfaceX64) {
+        ++s_pending;
+        if (s_pending == 1 || s_pending == 120 || s_pending == 1200) {
+            char msg[240];
+            sprintf_s(msg, "[ultra-renderer-preflight] Awaiting in-frame scene resources: "
+                "color=%d depth=%d (attempt=%u). SSGI/HDR10 remain disabled.",
+                g_frameSceneColorSurfaceX64 ? 1 : 0,
+                g_frameSceneDepthSurfaceX64 ? 1 : 0, s_pending);
+            LogFromController(msg);
+        }
+        return;
+    }
 
     struct ProbeImage {
         VkImageCreateInfo info{};
