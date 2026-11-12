@@ -222,3 +222,57 @@ dans IW5/DXVK demeure un jalon non terminé.
 
 Compilation MSVC x64 validée en CI (ne prouve pas le support HDR du PC) :
 https://github.com/grg914/MW32011NCP/actions/workflows/ultra-remaster-hdr-probe.yml
+
+
+## Nouveau : diagnostic natif branché à la vraie trame Vulkan
+
+À partir du commit du 12 novembre 2026, la DLL du mod appelle
+ProbeUltraRenderTargetsX64() depuis RunDlssEvaluateAndCompositeX64,
+juste après la résolution MSAA de la scène et avant son évaluation DLSS.
+Cette sonde est donc raccordée à **un véritable point du moteur**
+contrairement aux shaders GLSL qui restent indépendants.
+
+La sonde est **strictement en lecture seule** : QueryInterface sur les
+surfaces D3D9/DXVK, GetVulkanImageInfo et une unique ligne de log
+[ultra-renderer-preflight] après obtention des deux surfaces.
+Elle n'alloue pas de VkImage, ne change pas les états, ne soumet aucune
+commande Vulkan et ne modifie pas l'image affichée.
+
+Le log rapporte :
+- taille, format Vulkan, sample count et usage flags du buffer couleur ;
+- les mêmes données pour le depth buffer ;
+- compatibilité des dimensions, sample unique et présence du flag
+  VK_IMAGE_USAGE_SAMPLED_BIT ;
+- indication du **format float** du buffer couleur, **sans prétendre**
+  prouver que la scène contient de vraies hautes lumières HDR.
+
+Cela permet de trancher une question matérielle concrète : le depth buffer
+du jeu est-il directement accessible à un compute shader SSGI, ou faut-il
+un chemin de copie/résolution supplémentaire ? Le buffer est-il de type
+float pré-tone-map, ou le hook actuel tombe-t-il sur du SDR 8 bits ?
+
+### Tester sur le vrai PC
+
+1. Ne pas fusionner cette PR tant que le build x64 et les tests en jeu
+   ne sont pas vérifiés ; pour un essai, construire la branche à part.
+2. Installer une build x64 faite depuis cette branche (et les DLL NVIDIA
+   autorisées requises par le DLSS classique) dans une copie de test de
+   l'installation de MW3.
+3. Vérifier le fichier mw3ncp_config.ini :
+   [Video] GraphicsApi=Vulkan et StreamlineEnabled=1.
+4. Démarrer **une mission de la campagne**, jamais le multijoueur.
+   Le mod ne possède pas encore de détecteur fiable qui distingue
+   Campagne de Survie : à ce stade le diagnostic uniquement lecture
+   n'impose pas de changement de rendu dans ces modes.
+5. Lire le log du mod (près de l'installation du jeu selon la
+   configuration) et rechercher [ultra-renderer-preflight].
+   Ne fournir que la ligne contenant les formats et drapeaux Vulkan,
+   sans chemins personnels, lors du diagnostic.
+6. Ne pas activer d'option HDR10Native/SSGIEnabled fictive : aucun
+   dispatch shader ni swapchain HDR10 n'est encore implémenté.
+
+Après les résultats du log, la prochaine contribution pourra créer
+des ressources compute compatibles avec le **format réel** (et non
+supposé), et planifier la localisation d'un buffer HDR de scène avant
+tone mapping. Le HDR10 côté présentation DXVK ne peut pas être confirmé
+par le seul résultat de cette sonde.
