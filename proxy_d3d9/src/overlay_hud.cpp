@@ -39,6 +39,7 @@
 #include <shlwapi.h>
 #include "../third_party/minhook/include/MinHook.h"
 #include "mod_config.h"
+#include "game_exe_detect.h" // SP-only guard for the DLSS Advanced Video row
 #include "overlay_hud.h"
 #include "controller_input.h"
 #include "vanilla_settings_table.h"
@@ -5313,11 +5314,80 @@ void AdjustBindsRow(int row, int direction)
     SaveModConfig();
 }
 
+// DLSS-only branch: a real configurable row in the existing Advanced Video
+// custom Options screen (not an unrelated overlay or a guessed native dvar).
+// One extra row on x64 campaign only. The real native modes remain unchanged.
+// Changing DLSS requires a full process restart: DXVK/Streamline are loaded
+// before the in-game settings UI exists, and render targets are startup-sized.
+// Do NOT try vid_restart or recreate Vulkan resources from inside a menu tick.
+struct DlssMenuMode {
+    const char* name;
+    int streamlineMode;      // sl::DLSSMode in third_party/streamline/include/sl_dlss.h
+    int sceneScalePercent;   // internal scene resolution; output/backbuffer stays 4K
+};
+constexpr DlssMenuMode kDlssMenuModes[] = {
+    { "Off",                0, 100 },
+    { "Quality",            3,  67 },
+    { "Balanced",           2,  58 },
+    { "Performance",        1,  50 },
+    { "Ultra Performance",  4,  33 },
+    { "DLAA",               6, 100 },
+};
+constexpr int kDlssMenuModeCount = sizeof(kDlssMenuModes) / sizeof(kDlssMenuModes[0]);
+bool g_dlssMenuRestartRequired = false;
+
+bool IsDlssAdvancedVideoRow(int row)
+{
+#if defined(_M_X64) || defined(_WIN64)
+    return EffectiveTab() == UnifiedTab::AdvancedVideo &&
+        GetDetectedGameExecutable() == GameExecutable::SP &&
+        row == g_tabVanillaRowCount;
+#else
+    (void)row;
+    return false;
+#endif
+}
+
+int CurrentDlssMenuModeIndex()
+{
+    if (!g_modConfig.streamlineEnabled || g_modConfig.dlssModeX64 == 0)
+        return 0;
+    for (int i = 1; i < kDlssMenuModeCount; ++i)
+        if (kDlssMenuModes[i].streamlineMode == g_modConfig.dlssModeX64)
+            return i;
+    return 1; // unsupported legacy enum, default to Quality on next edit
+}
+
+void AdjustDlssAdvancedVideoRow(int direction)
+{
+    const int oldIndex = CurrentDlssMenuModeIndex();
+    const int nextIndex = (oldIndex + direction + kDlssMenuModeCount) % kDlssMenuModeCount;
+    const DlssMenuMode& selected = kDlssMenuModes[nextIndex];
+    // Keep the working DXVK 4K display enumeration and native r_mode
+    // untouched. Only our own mod-owned INI settings are persisted.
+    g_modConfig.graphicsApi = GraphicsApi::Vulkan;
+    g_modConfig.streamlineEnabled = selected.streamlineMode != 0;
+    g_modConfig.dlssModeX64 = selected.streamlineMode;
+    g_modConfig.internalRenderScalePercent = selected.sceneScalePercent;
+    g_modConfig.dlssNeuralRenderingEnabledX64 = false;
+    g_modConfig.fsrSharpenEnabled = false;
+    g_modConfig.motionBlurEnabled = false;
+    SaveModConfig(); // saves to mw3ncp_config.ini, never to players2/config.cfg
+    g_dlssMenuRestartRequired = true;
+    char info[196];
+    sprintf_s(info, "[dlss-menu] selected %s (mode=%d, sceneScale=%d%%); "
+        "changes saved; EXIT AND RELAUNCH MW3 to apply; display resolution unchanged.",
+        selected.name, selected.streamlineMode, selected.sceneScalePercent);
+    LogFromController(info);
+}
+
 int CurrentTabRowCount()
 {
     UnifiedTab tab = EffectiveTab();
     if (tab == UnifiedTab::Controller) return kOptRowCount;
     if (tab == UnifiedTab::Binds) return kBindsRowCount;
+    if (tab == UnifiedTab::AdvancedVideo &&
+        IsDlssAdvancedVideoRow(g_tabVanillaRowCount)) return g_tabVanillaRowCount + 1;
     return g_tabVanillaRowCount;
 }
 
@@ -5326,6 +5396,7 @@ const char* CurrentTabRowLabel(int row)
     UnifiedTab tab = EffectiveTab();
     if (tab == UnifiedTab::Controller) return g_optRows[row].label;
     if (tab == UnifiedTab::Binds) return (row >= 0 && row < kBindsRowCount) ? kBindsRows[row].label : "";
+    if (IsDlssAdvancedVideoRow(row)) return "DLSS Super Resolution";
     return kVanillaSettings[g_tabVanillaIndices[row]].displayLabel;
 }
 
@@ -5360,6 +5431,12 @@ void CurrentTabRowValueString(int row, char* outBuf, size_t outBufSize)
     UnifiedTab tab = EffectiveTab();
     if (tab == UnifiedTab::Controller) { FormatOptRowValue(g_optRows[row], outBuf, outBufSize); return; }
     if (tab == UnifiedTab::Binds) { CurrentBindsRowValueString(row, outBuf, outBufSize); return; }
+    if (IsDlssAdvancedVideoRow(row)) {
+        const char* selected = kDlssMenuModes[CurrentDlssMenuModeIndex()].name;
+        _snprintf_s(outBuf, outBufSize, _TRUNCATE, "%s%s", selected,
+            g_dlssMenuRestartRequired ? " (restart)" : "");
+        return;
+    }
     int idx = g_tabVanillaIndices[row];
     const VanillaSettingDef& def = kVanillaSettings[idx];
     // Full-scope expansion (2026-08-06): Keybind rows show the real bound key, not a
@@ -5396,7 +5473,7 @@ bool CurrentTabRowIsBoolToggle(int row)
 {
     UnifiedTab tab = EffectiveTab();
     if (tab == UnifiedTab::Controller) return g_optRows[row].kind == OptRowKind::BoolToggle;
-    if (tab == UnifiedTab::Binds) return false;
+    if (tab == UnifiedTab::Binds || IsDlssAdvancedVideoRow(row)) return false;
     return kVanillaSettings[g_tabVanillaIndices[row]].kind == VanillaSettingKind::DvarBool;
 }
 
@@ -5412,6 +5489,11 @@ bool CurrentTabRowIsBoolToggle(int row)
 // nothing meaningful to fill a bar with.
 bool TryComputeCurrentTabRowFraction(int row, float& outFraction)
 {
+    if (IsDlssAdvancedVideoRow(row)) {
+        outFraction = static_cast<float>(CurrentDlssMenuModeIndex()) /
+            static_cast<float>(kDlssMenuModeCount - 1);
+        return true;
+    }
     UnifiedTab tab = EffectiveTab();
     if (tab == UnifiedTab::Controller) {
         const OptRow& r = g_optRows[row];
@@ -5491,7 +5573,7 @@ void DrawToggleSwitch(void* device, float x, float centerY, bool on, float scale
 bool CurrentTabRowIsKeybind(int row)
 {
     UnifiedTab tab = EffectiveTab();
-    if (tab == UnifiedTab::Controller || tab == UnifiedTab::Binds) return false;
+    if (tab == UnifiedTab::Controller || tab == UnifiedTab::Binds || IsDlssAdvancedVideoRow(row)) return false;
     return kVanillaSettings[g_tabVanillaIndices[row]].kind == VanillaSettingKind::Keybind;
 }
 
@@ -5506,6 +5588,8 @@ const char* CurrentTabRowDescription(int row)
     UnifiedTab tab = EffectiveTab();
     if (tab == UnifiedTab::Controller) return g_optRows[row].description;
     if (tab == UnifiedTab::Binds) return (row >= 0 && row < kBindsRowCount) ? kBindsRows[row].description : "";
+    if (IsDlssAdvancedVideoRow(row))
+        return "4K output retained. Change DLSS mode; EXIT and RELAUNCH MW3 to apply.";
     return kVanillaSettings[g_tabVanillaIndices[row]].description;
 }
 
@@ -5546,6 +5630,7 @@ void AdjustCurrentTabRow(int row, int direction)
     UnifiedTab tab = EffectiveTab();
     if (tab == UnifiedTab::Controller) { AdjustOptRow(row, direction); return; }
     if (tab == UnifiedTab::Binds) { AdjustBindsRow(row, direction); return; }
+    if (IsDlssAdvancedVideoRow(row)) { AdjustDlssAdvancedVideoRow(direction); return; }
 
     int idx = g_tabVanillaIndices[row];
     const VanillaSettingDef& def = kVanillaSettings[idx];
