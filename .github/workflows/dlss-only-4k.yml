@@ -31,6 +31,11 @@ jobs:
           cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\dllmain.cpp"
           cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\overlay_hud.cpp"
 
+      - name: Win32 RT_RCDATA update smoke test (64MB source DLL)
+        shell: pwsh
+        run: |
+          & .\tools\dlss_only\test_resource_update.ps1
+
   test-installer:
     runs-on: windows-latest
     steps:
