@@ -22,6 +22,15 @@ currently load-status detection only, not actual neural evaluation.
    Third-party add-ons need separate source and binary inspection.
 6. File names alone DO NOT establish DLSS 5 compatibility.
 
+For a **real antivirus scan** of the checkout and local runtime files on
+Windows with Microsoft Defender (separate from this read-only inventory), run:
+
+        Start-MpScan -ScanType CustomScan -ScanPath "C:\path\to\MW32011NCP"
+        Start-MpScan -ScanType CustomScan -ScanPath "C:\path\to\DLSS5"
+
+Defender results can still contain false positives or miss malware. Use the
+actual archives/build artifacts you intend to run, not just the source tree.
+
 ## Repository security: limited initial review
 
 At the start, this fork was identical to k8se10/MW32011NCP at commit
