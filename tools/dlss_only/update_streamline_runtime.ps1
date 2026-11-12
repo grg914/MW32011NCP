@@ -179,14 +179,21 @@ try {
     Copy-Item -LiteralPath $proxy -Destination $temp -ErrorAction Stop
     $ids = [int[]]@($items | ForEach-Object { [int]$_.Id })
     $langs = [uint16[]]$resourceLanguages
-    $payloads = [byte[][]]@($items | ForEach-Object { [System.IO.File]::ReadAllBytes($_.Path) })
+    # Do not pipeline byte arrays: PowerShell enumerates and flattens them.
+    $payloads = [byte[][]]::new($items.Count)
+    for ($i = 0; $i -lt $items.Count; ++$i) {
+        $payloads[$i] = [System.IO.File]::ReadAllBytes($items[$i].Path)
+    }
     [MW3NcpNvidiaResources]::Write($temp, $ids, $langs, $payloads)
 
     for ($i = 0; $i -lt $items.Count; ++$i) {
         $embedded = [MW3NcpNvidiaResources]::Read($temp, [int]$items[$i].Id, [uint16]$langs[$i])
-        $gotHash = [Convert]::ToHexString(
-            [System.Security.Cryptography.SHA256]::HashData($embedded)
-        )
+        # Windows PowerShell 5.1 targets .NET Framework, which lacks
+        # Convert.ToHexString and SHA256.HashData.
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { $hashBytes = $sha.ComputeHash($embedded) }
+        finally { $sha.Dispose() }
+        $gotHash = [BitConverter]::ToString($hashBytes).Replace('-', '')
         if ($gotHash -cne $items[$i].Hash) {
             throw "Resource checksum mismatch for $($items[$i].Name). No changes installed."
         }
