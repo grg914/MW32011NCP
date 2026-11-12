@@ -1,0 +1,28 @@
+name: Compile native HDR10 Vulkan preflight
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/ultra_remaster/hdr10_probe_win32.cpp"
+      - ".github/workflows/ultra-remaster-hdr-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Enable native MSVC x64 compiler
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Compile Vulkan HDR10 format probe (do not run without a real HDR monitor)
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /W4 /EHsc /I "dxvk\include\vulkan\include" "tools\ultra_remaster\hdr10_probe_win32.cpp" /Fe:"%RUNNER_TEMP%\mw3_hdr10_probe.exe" /link user32.lib
