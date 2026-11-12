@@ -35,6 +35,10 @@ jobs:
         shell: pwsh
         run: |
           & .\tools\dlss_only\test_resource_update.ps1
+      - name: Patch official MW3NCP 0.0.3 x64 proxy with synthetic large Streamline payloads
+        shell: pwsh
+        run: |
+          & .\tools\dlss_only\test_resource_update_release.ps1
 
   test-installer:
     runs-on: windows-latest
