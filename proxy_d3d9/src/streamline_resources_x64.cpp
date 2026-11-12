@@ -1355,6 +1355,93 @@ void GetDlssTaggedImagesX64(DlssTaggedImageX64& inputColor, DlssTaggedImageX64& 
     outputColor = g_taggedOutputColorX64;
 }
 
+// MW3 Ultra Remaster, 2026-11-12: read-only render-resource preflight.
+// Verifies the ACTUAL DXVK VkImage format/usage for this frame's 3D colour
+// and depth BEFORE attempting a later SSGI dispatch. Shader validation alone
+// cannot establish that a game's depth buffer is sampleable or that a colour
+// buffer has un-clipped HDR data. No image writes, GPU work, state transitions,
+// new Vulkan objects, or per-frame allocations occur here.
+//
+// Deliberately called from the DLSS scene boundary AFTER the MSAA resolve
+// (RunDlssEvaluateAndCompositeX64), only once when two real surfaces exist.
+// The scene colour may be a fully tonemapped UNORM target: in that case it is
+// NOT a native HDR10 source, regardless of DXVK's WSI capabilities.
+// WARNING: iw5sp.exe also hosts Survival. This is DIAGNOSTIC ONLY; any later
+// SSGI/HDR rendering code must independently verify the game mode is Campaign.
+void ProbeUltraRenderTargetsX64()
+{
+    static bool s_reported = false;
+    static uint32_t s_pending = 0;
+    if (s_reported || !IsStreamlineInitializedX64()) return;
+    if (!g_frameSceneColorSurfaceX64 || !g_frameSceneDepthSurfaceX64) {
+        ++s_pending;
+        if (s_pending == 1 || s_pending == 120 || s_pending == 1200) {
+            char msg[240];
+            sprintf_s(msg, "[ultra-renderer-preflight] Awaiting in-frame scene resources: "
+                "color=%d depth=%d (attempt=%u). SSGI/HDR10 remain disabled.",
+                g_frameSceneColorSurfaceX64 ? 1 : 0,
+                g_frameSceneDepthSurfaceX64 ? 1 : 0, s_pending);
+            LogFromController(msg);
+        }
+        return;
+    }
+
+    struct ProbeImage {
+        VkImageCreateInfo info{};
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImage image = VK_NULL_HANDLE;
+    };
+    auto read = [](void* surface, ProbeImage& out) -> bool {
+        auto* unknown = reinterpret_cast<IUnknown*>(surface);
+        ID3D9VkInteropTextureX64* interop = nullptr;
+        HRESULT hr = unknown->QueryInterface(IID_ID3D9VkInteropTexture_X64,
+            reinterpret_cast<void**>(&interop));
+        if (FAILED(hr) || !interop) return false;
+        out.info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        hr = interop->GetVulkanImageInfo(&out.image, &out.layout, &out.info);
+        interop->Release();
+        return SUCCEEDED(hr) && out.image != VK_NULL_HANDLE;
+    };
+
+    ProbeImage scene{}, depth{};
+    if (!read(g_frameSceneColorSurfaceX64, scene) ||
+        !read(g_frameSceneDepthSurfaceX64, depth)) return;
+
+    const bool sameExtent =
+        scene.info.extent.width == depth.info.extent.width &&
+        scene.info.extent.height == depth.info.extent.height;
+    const bool oneSample =
+        scene.info.samples == VK_SAMPLE_COUNT_1_BIT &&
+        depth.info.samples == VK_SAMPLE_COUNT_1_BIT;
+    const bool sceneSampleable =
+        (scene.info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0;
+    const bool depthSampleable =
+        (depth.info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0;
+    const bool sceneFloat =
+        scene.info.format == VK_FORMAT_R16G16B16A16_SFLOAT ||
+        scene.info.format == VK_FORMAT_R32G32B32A32_SFLOAT ||
+        scene.info.format == VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+
+    char buf[640];
+    sprintf_s(buf,
+        "[ultra-renderer-preflight] DXVK frame scene color=%ux%u fmt=%d samples=%u usage=0x%X "
+        "depth=%ux%u fmt=%d samples=%u usage=0x%X | matching-size=%d single-sample=%d "
+        "color-sampleable=%d depth-sampleable=%d float-color-format=%d. "
+        "DIAGNOSTIC ONLY: SSGI NOT DISPATCHED, HDR10 SWAPCHAIN NOT CREATED. "
+        "Float format does NOT prove linear/unclipped HDR; requires engine-stage validation.",
+        scene.info.extent.width, scene.info.extent.height,
+        static_cast<int>(scene.info.format),
+        static_cast<unsigned>(scene.info.samples), scene.info.usage,
+        depth.info.extent.width, depth.info.extent.height,
+        static_cast<int>(depth.info.format),
+        static_cast<unsigned>(depth.info.samples), depth.info.usage,
+        sameExtent ? 1 : 0, oneSample ? 1 : 0,
+        sceneSampleable ? 1 : 0, depthSampleable ? 1 : 0,
+        sceneFloat ? 1 : 0);
+    LogFromController(buf);
+    s_reported = true;
+}
+
 // Called once, from InstallEndSceneHook (overlay_hud.cpp) -- same one-
 // device-for-this-game's-lifetime guard convention every other x64 hook
 // installer in this codebase uses.

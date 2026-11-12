@@ -1,0 +1,57 @@
+#version 450
+
+// HDR10 OUTPUT TRANSFORM (not a swapchain implementation).
+// Input must be linear, scene-referred Rec.709 RGB, with highlights preserved.
+// After this pass the runtime MUST copy/present to a matching HDR10/PQ Vulkan
+// swapchain (BT.2020 primaries + ST2084 transfer), with HDR metadata.
+// Running on an SDR swapchain is incorrect; do not enable until validated.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(set = 0, binding = 0) uniform sampler2D uLinearScene;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D uPqOutput;
+
+layout(set = 0, binding = 2, std140) uniform HdrFrame {
+    vec4 exposureNits; // x = linear exposure, y = scene white nits, z = peak nits, w = HUD flag (0/1)
+} cfg;
+
+// BT.709 -> BT.2020 (scene-linear primaries, D65), columns of matrix.
+const mat3 BT709_TO_BT2020 = mat3(
+    0.6274040, 0.0690970, 0.0163916,
+    0.3292820, 0.9195400, 0.0880132,
+    0.0433136, 0.0113612, 0.8955950
+);
+
+float st2084(float linearNits) {
+    // SMPTE ST 2084 (PQ), normalized to 10000 cd/m2.
+    const float m1 = 2610.0 / 16384.0;
+    const float m2 = 2523.0 / 32.0;
+    const float c1 = 3424.0 / 4096.0;
+    const float c2 = 2413.0 / 128.0;
+    const float c3 = 2392.0 / 128.0;
+    float l = pow(clamp(linearNits / 10000.0, 0.0, 1.0), m1);
+    return pow((c1 + c2 * l) / (1.0 + c3 * l), m2);
+}
+
+void main() {
+    ivec2 xy = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz = imageSize(uPqOutput);
+    if (any(greaterThanEqual(xy, sz))) return;
+    vec2 uv = (vec2(xy) + 0.5) / vec2(sz);
+    float whiteNits = clamp(cfg.exposureNits.y, 80.0, 500.0);
+    float peakNits = max(whiteNits + 1.0, cfg.exposureNits.z);
+    vec3 linearColor = max(textureLod(uLinearScene, uv, 0.0).rgb, vec3(0.0));
+    vec3 targetNits = linearColor * max(cfg.exposureNits.x, 0.0) * whiteNits;
+
+    if (cfg.exposureNits.w > 0.5) {
+        // HUD: limit to paper white instead of letting UI exceed peak luminance.
+        targetNits = min(targetNits, vec3(whiteNits));
+    } else {
+        // Smooth knee starts at paper white and asymptotes toward peak.
+        vec3 aboveWhite = max(targetNits - whiteNits, vec3(0.0));
+        targetNits = min(targetNits, vec3(whiteNits)) +
+                     aboveWhite / (vec3(1.0) + aboveWhite / (peakNits - whiteNits));
+    }
+
+    vec3 bt2020 = max(BT709_TO_BT2020 * targetNits, vec3(0.0));
+    imageStore(uPqOutput, xy, vec4(
+        st2084(bt2020.r), st2084(bt2020.g), st2084(bt2020.b), 1.0));
+}

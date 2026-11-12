@@ -82,6 +82,7 @@ extern void TagStreamlineOutputColorX64(); // streamline_resources_x64.cpp -- mu
 extern void TagStreamlineMotionVectorsX64(); // streamline_resources_x64.cpp, same reason.
 extern bool GetDlssOutputTextureSizeX64(uint32_t& outWidth, uint32_t& outHeight); // streamline_resources_x64.cpp, 2026-09-27
 extern bool ResolveMsaaSceneColorForDlssX64(void* device); // streamline_resources_x64.cpp, 2026-09-27 (ROUND 23)
+extern void ProbeUltraRenderTargetsX64(); // read-only scene/depth capabilities for SSGI/HDR preflight
 extern void UpdateStreamlineCameraFromEngineViewX64(void* engineState); // streamline_camera_x64.cpp, 2026-09-27 (ROUND 24)
 extern "C" void* GetEngineMainCmdBufStateX64(); // analog_input_hooks_x64.cpp, 2026-09-27 (ROUND 24)
 extern void GetDlssTaggedImagesX64(DlssTaggedImageX64& inputColor, DlssTaggedImageX64& outputColor); // streamline_resources_x64.cpp, 2026-09-27
@@ -1247,6 +1248,9 @@ void RunDlssEvaluateAndCompositeX64(void* device)
     // configs; resolve it into a single-sampled texture DLSS can read. No-op
     // when the frame's scene colour was already single-sampled.
     if (!ResolveMsaaSceneColorForDlssX64(device)) return;
+    // Inspect the actual scene/depth VkImages once, before any compute SSGI
+    // integration. Read-only, no extra GPU submission or render-state change.
+    ProbeUltraRenderTargetsX64();
 
     bool evaluated = EvaluateStreamlineDlssX64();
     if (!evaluated) return; // already logged its own real failure reason -- nothing to composite
