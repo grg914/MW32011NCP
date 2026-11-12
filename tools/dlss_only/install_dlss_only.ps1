@@ -9,6 +9,7 @@ param(
     [string]$ReleaseZip,
     [ValidateRange(50, 100)]
     [int]$RenderScalePercent = 67,
+    [switch]$FourKCheckOnly,
     [switch]$DryRun
 )
 
@@ -78,7 +79,7 @@ try {
     $settings = [ordered]@{
         Video = [ordered]@{
             GraphicsApi = 'Vulkan'
-            StreamlineEnabled = '1'
+            StreamlineEnabled = $(if ($FourKCheckOnly) { '0' } else { '1' })
             InternalRenderScalePercent = [string]$RenderScalePercent
             TextureRenderRes = '1x'
             BulkTexturePrecache = '0'
@@ -96,6 +97,7 @@ try {
 
     Write-Host "MW3 folder: $root"
     Write-Host "DLSS Quality, render scale $RenderScalePercent%, DXVK desktop-mode compatibility."
+    if ($FourKCheckOnly) { Write-Host '4K check only: DLSS disabled for this boot; test the 4K display list first.' }
     Write-Host 'Windows output resolution is not changed; DLSS 5 is NOT implemented.'
     if ($DryRun) {
         Write-Host 'DryRun complete: no game file was changed.'
