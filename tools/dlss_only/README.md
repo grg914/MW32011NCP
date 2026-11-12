@@ -120,6 +120,41 @@ validation du fonctionnement du menu sur une vraie carte RTX.
 évaluation DLSS NR n'est intégrée et le SDK privé correspondant
 n'est pas distribué.
 
+## Remplacer les runtimes NVIDIA par une version plus recente (sans recompiler)
+
+Le fichier `tools/dlss_only/update_streamline_runtime.ps1` met a jour les
+quatre ressources NVIDIA contenues dans le **d3d9.dll DEJA INSTALLE**
+(IDs 111, 112, 113, 114). Il n'efface pas la ressource DXVK (ID 110),
+ne modifie ni le mode video natif de MW3 ni les fichiers de campagne.
+Le mod extrait de nouveau ces quatre DLL a chaque lancement ; une copie
+manuelle dans AppData serait donc immediatement ecrasee.
+
+Conditions : jeu ferme ; dossier contenant les quatre DLL signees NVIDIA
+`sl.interposer.dll`, `sl.common.dll`, `sl.dlss.dll`, `nvngx_dlss.dll`
+(versions du meme SDK Streamline pour les trois fichiers sl.*).
+Ne PAS integrer `nvngx_dlssnr.dll` ni `sl.dlss_nr.dll` : DLSS 5 NR
+n'a pas de chemin d'evaluation dans MW3.
+
+Depuis PowerShell, commencer par un test sans ecriture :
+
+    .\tools\dlss_only\update_streamline_runtime.ps1 -GameDir 'C:\Program Files (x86)\Steam\steamapps\common\Call of Duty Modern Warfare 3' -StreamlineRuntimeDir 'C:\Users\Grg\Desktop\mw3\streamline-runtime new' -DryRun
+
+Le test controle les signatures Authenticode NVIDIA et les architectures PE
+x64, liste les versions et verifie la presence des 4 ressources dans le
+proxy. Si tout est conforme, relancer sans `-DryRun` (jeu ferme) :
+
+    .\tools\dlss_only\update_streamline_runtime.ps1 -GameDir 'C:\Program Files (x86)\Steam\steamapps\common\Call of Duty Modern Warfare 3' -StreamlineRuntimeDir 'C:\Users\Grg\Desktop\mw3\streamline-runtime new'
+
+Le script cree `d3d9.dll.before-streamline-*.bak`, recompresse les
+quatre ressources RCDATA avec leur langue d'origine, verifie leurs
+empreintes SHA-256, puis remplace le proxy. En cas d'echec, restauration
+automatique au mieux. Pour revenir en arriere en cas d'echec dans le jeu,
+fermer MW3 et restaurer manuellement la sauvegarde vers `d3d9.dll`.
+
+**Important** : cette operation ne peut pas injecter la nouvelle interface
+du menu DLSS dans le binaire officiel v0.0.3-x64. Le menu requiert
+une DLL du fork recompilee et assemblee avec les ressources NVIDIA
+(voir `install_menu_from_ci.ps1`).
 ## Si 4K est encore absente
 
 - Windows doit être réellement en 3840×2160.
