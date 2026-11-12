@@ -17,7 +17,7 @@ $knownNvidiaFiles = @(
 
 function Get-PeArchitecture([string]$FilePath) {
     $stream = [System.IO.File]::Open($FilePath, 'Open', 'Read', 'ReadWrite')
-    $reader = New-Object System.IO.BinaryReader($stream)
+    $reader = [System.IO.BinaryReader]::new($stream)
     try {
         if ($stream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5A4D) {
             return 'not-PE'
