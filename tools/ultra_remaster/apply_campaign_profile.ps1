@@ -7,7 +7,9 @@ param(
     [string]$ConfigPath,
     [ValidateSet('FpsFirst', 'UltraPreview')]
     [string]$Profile = 'FpsFirst',
-    [switch]$DryRun
+    [switch]$DryRun,
+    [ValidateRange(0, 100)]
+    [int]$RenderScalePercent = 0
 )
 
 Set-StrictMode -Version Latest
@@ -26,6 +28,7 @@ if (-not (Test-Path -LiteralPath (Join-Path (Split-Path $resolved -Parent) 'iw5s
 
 # The same INI API used by the native mod preserves other sections and settings.
 # Windows-specific by design; this mod only runs under Windows.
+if (-not ('CampaignIniApi' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Text;
@@ -39,6 +42,7 @@ public static class CampaignIniApi {
     public static extern bool Write(string section, string key, string value, string path);
 }
 '@
+}
 
 function Read-Setting([string]$Section, [string]$Key) {
     $missing = '__MW3NCP_SETTING_MISSING__'
@@ -81,6 +85,11 @@ if ($Profile -eq 'FpsFirst') {
     $video['TextureRenderRes'] = '2x'
     $video['BulkTexturePrecache'] = '0'
     $video['ForceHighQualityShadows'] = '1'
+}
+
+if ($RenderScalePercent -gt 0) {
+    # Explicit override for benchmarking at lower render resolutions.
+    $video['InternalRenderScalePercent'] = [string]$RenderScalePercent
 }
 
 $settings = [ordered]@{
