@@ -52,6 +52,16 @@ try {
     Assert ($dxvk.Contains('d3d9.modeCountCompatibility = True')) 'DXVK native mode fix missing'
     Assert ($dxvk.Contains('d3d9.forceAspectRatio = 16:9')) 'DXVK custom option lost'
     Assert (@(Get-ChildItem -LiteralPath $game -Filter '*.before-dlss-*.bak').Count -eq 2) 'Expected INI + DXVK backups'
+    # 4K isolation test: keep Vulkan mode compatibility, turn OFF DLSS without
+    # modifying the game's resolution or deleting the previous backups.
+    & $script -GameDir $game -FourKCheckOnly | Out-Null
+    $isolated = [System.IO.File]::ReadAllText((Join-Path $game 'mw3ncp_config.ini'))
+    Assert ($isolated.Contains('StreamlineEnabled=0')) '4K-only test must turn off DLSS'
+    Assert ($isolated.Contains('GraphicsApi=Vulkan')) '4K-only test must retain Vulkan'
+    & $script -GameDir $game | Out-Null
+    $enabledAgain = [System.IO.File]::ReadAllText((Join-Path $game 'mw3ncp_config.ini'))
+    Assert ($enabledAgain.Contains('StreamlineEnabled=1')) 'DLSS profile did not re-enable NVIDIA Streamline'
+
     Write-Host 'PASS: release architecture, dry run, rollback backups, DXVK mode option, DLSS profile, preservation.'
 }
 finally {
