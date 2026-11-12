@@ -55,6 +55,12 @@ try {
     Assert-IniLine $afterUltra 'ForceHighQualityShadows' '1'
     Assert-IniLine $afterUltra 'StreamlineEnabled' '1'
     Assert-True (@(Get-ChildItem -Path $backupPattern).Count -eq 2) 'Second preset should create second backup'
+
+    & $script -ConfigPath $config -Profile FpsFirst -RenderScalePercent 60 | Out-Null
+    $customScale = [System.IO.File]::ReadAllText($config)
+    Assert-IniLine $customScale 'InternalRenderScalePercent' '60'
+    Assert-IniLine $customScale 'TextureRenderRes' '1x'
+    Assert-True (@(Get-ChildItem -Path $backupPattern).Count -eq 3) 'Third preset should create third backup'
     Write-Host 'PASS: dry run, backup, option preservation, FpsFirst and UltraPreview.'
 }
 finally {
