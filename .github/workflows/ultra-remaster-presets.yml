@@ -1,0 +1,23 @@
+name: Validate Campaign performance presets
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/ultra_remaster/**"
+      - ".github/workflows/ultra-remaster-presets.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-presets:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Smoke test Windows INI backup and DLSS render-scale profiles
+        shell: pwsh
+        run: |
+          & .\tools\ultra_remaster\test_profiles.ps1
