@@ -171,3 +171,54 @@ Références internes :
 - proxy_d3d9/src/streamline_evaluate_x64.cpp
 - proxy_d3d9/src/streamline_resources_x64.cpp
 - re_notes/x64_migration/texture_upscale_cache_research.md
+
+
+## Code GPU ajouté (prototypes compilés, pas encore chargés par MW3)
+
+Trois vrais shaders GLSL/Vulkan Compute sont maintenant présents dans
+tools/ultra_remaster/shaders/ :
+
+- ssgi_trace.comp : passe demi-résolution, profondeur, reprojection
+  caméra et ray marching en espace écran, écrit les rebonds estimés
+  dans une texture RGBA16F. Cette source suppose une scène LINEAIRE et
+  un depth buffer échantillonnable. Elle ne réalise pas encore
+  l'accumulation temporelle ou l'upscaling bilatéral.
+- ssgi_composite.comp : additionne les rebonds diffus à la radiance
+  linéaire de la scène, avant reconstruction DLSS et tone mapping.
+  La qualité requiert une interpolation/filtration adaptée.
+- hdr10_encode.comp : transforme une image linéaire Rec.709 en
+  BT.2020/PQ ST 2084 et limite l'intensité au pic HDR.
+  Ne peut pas, à lui seul, transformer une swapchain SDR en HDR10.
+
+Ces shaders ont été compilés et validés dans GitHub Actions via
+glslangValidator/spirv-val, mais il n'y a pas encore de pipeline C++
+dans MW32011NCP qui alloue leurs ressources, remplit leurs descripteurs
+et les déclenche pendant une trame de campagne. Ne pas écrire
+SSGIEnabled=1 ou HDR10Native=1 dans l'INI en supposant que ces clés
+existent : elles ne sont pas encore intégrées au parseur.
+
+Test de compilation GPU (exécuté automatiquement sur la PR) :
+https://github.com/grg914/MW32011NCP/actions/workflows/ultra-remaster-shaders.yml
+
+## Détection Windows x64 du support de surface HDR10
+
+Le fichier tools/ultra_remaster/hdr10_probe_win32.cpp est un EXÉCUTABLE
+indépendant compilé sous MSVC x64, sans injection. Il charge vulkan-1.dll
+dynamiquement et recherche les formats de surface
+VK_COLOR_SPACE_HDR10_ST2084_EXT + 10 bits pris en charge sur un
+VkSurfaceKHR Win32 temporaire.
+
+Pour compiler dans l'invite de commandes développeur x64 Visual Studio,
+à la racine d'un clone AVEC sous-modules Vulkan-Headers :
+
+    cl /nologo /std:c++17 /EHsc /I "dxvk\include\vulkan\include" "tools\ultra_remaster\hdr10_probe_win32.cpp" /Fe:hdr10_probe.exe /link user32.lib
+
+Puis lancer hdr10_probe.exe sous Windows, idéalement avec l'écran HDR
+ciblé comme écran principal. Le programme est en lecture seule et
+n'active pas le HDR. La sortie HDR10/PQ détectée indique uniquement
+les formats Vulkan exposés par le pilote, non que Windows, le moniteur
+et la swapchain interne du jeu les utilisent déjà. Le rendu HDR natif
+dans IW5/DXVK demeure un jalon non terminé.
+
+Compilation MSVC x64 validée en CI (ne prouve pas le support HDR du PC) :
+https://github.com/grg914/MW32011NCP/actions/workflows/ultra-remaster-hdr-probe.yml
