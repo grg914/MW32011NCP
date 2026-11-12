@@ -82,6 +82,7 @@ using System.Runtime.InteropServices;
 
 public static class MW3NcpNvidiaResources {
     private const uint LOAD_LIBRARY_AS_DATAFILE = 2;
+    private const uint LOAD_LIBRARY_AS_IMAGE_RESOURCE = 0x20;
     private static readonly IntPtr RT_RCDATA = new IntPtr(10);
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate bool EnumLangProc(IntPtr module, IntPtr type, IntPtr name, ushort lang, IntPtr data);
@@ -110,9 +111,21 @@ public static class MW3NcpNvidiaResources {
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool End(IntPtr updater, bool discard);
     private static IntPtr Open(string path) {
+        // LOAD_LIBRARY_AS_DATAFILE is read-only and never calls DllMain. Some
+        // Windows installations prevent mapping a freshly modified DLL from
+        // %TEMP%; the IMAGE_RESOURCE option is a documented, equally safe
+        // read-only alternative (and also never calls DllMain).
         IntPtr module = LoadData(path, IntPtr.Zero, LOAD_LIBRARY_AS_DATAFILE);
-        if (module == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot read the proxy DLL resources");
-        return module;
+        if (module != IntPtr.Zero) return module;
+        int datafileError = Marshal.GetLastWin32Error();
+        module = LoadData(path, IntPtr.Zero, LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+        if (module != IntPtr.Zero) return module;
+        int imageError = Marshal.GetLastWin32Error();
+        throw new Win32Exception(imageError,
+            "Cannot read proxy PE resources at '" + path + "': " +
+            "LOAD_LIBRARY_AS_DATAFILE error " + datafileError +
+            ", LOAD_LIBRARY_AS_IMAGE_RESOURCE error " + imageError +
+            " (actual system error " + new Win32Exception(imageError).Message + ")");
     }
     public static ushort GetLanguage(string path, int id) {
         IntPtr module = Open(path);
@@ -173,8 +186,16 @@ if ($DryRun) {
 $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' +
     [Guid]::NewGuid().ToString('N').Substring(0,8)
 $backup = "$proxy.before-streamline-$stamp.bak"
-$temp = Join-Path $env:TEMP ("mw3-streamline-update-" + [Guid]::NewGuid().ToString('N') + '.dll')
+# Stage BESIDE the existing known-working mod DLL rather than in %TEMP%.
+# Both source and staged files then use the same drive, ACLs and Windows
+# security rules. No live game code is touched before resource/hash checks pass.
+$temp = Join-Path $game ('d3d9.streamline-stage-' + [Guid]::NewGuid().ToString('N') + '.dll')
+$originalHash = (Get-FileHash -LiteralPath $proxy -Algorithm SHA256).Hash
 Copy-Item -LiteralPath $proxy -Destination $backup -ErrorAction Stop
+if ((Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -cne $originalHash) {
+    throw "Safety backup checksum mismatch. No proxy changes made. Check disk permissions."
+}
+$replacementInstalled = $false
 try {
     Copy-Item -LiteralPath $proxy -Destination $temp -ErrorAction Stop
     $ids = [int[]]@($items | ForEach-Object { [int]$_.Id })
@@ -199,15 +220,25 @@ try {
         }
     }
     Copy-Item -LiteralPath $temp -Destination $proxy -Force -ErrorAction Stop
+    $replacementInstalled = $true
+    if ((Get-FileHash -LiteralPath $proxy -Algorithm SHA256).Hash -cne
+        (Get-FileHash -LiteralPath $temp -Algorithm SHA256).Hash) {
+        throw "Installed proxy hash mismatch; restoring backup."
+    }
     Write-Host 'SUCCESS: signed NVIDIA DLSS Super Resolution runtime embedded in the existing mod proxy.'
     Write-Host "Backup: $backup"
     Write-Host 'Keep the DXVK 4K mode fix; restart MW3 entirely. DLSS 5 NR is not enabled.'
 } catch {
-    # Existing original DLL is retained as an independent backup.
-    if (Test-Path -LiteralPath $backup -PathType Leaf) {
-        Copy-Item -LiteralPath $backup -Destination $proxy -Force -ErrorAction SilentlyContinue
+    # If resource validation failed on the staging file, the actual game
+    # DLL was NEVER touched; do not rewrite it pointlessly. If the final
+    # install began, explicitly verify that rollback succeeded.
+    if ($replacementInstalled) {
+        Copy-Item -LiteralPath $backup -Destination $proxy -Force -ErrorAction Stop
+        if ((Get-FileHash -LiteralPath $proxy -Algorithm SHA256).Hash -cne $originalHash) {
+            throw "CRITICAL: automatic rollback checksum mismatch. Restore manually from $backup. $($_.Exception.Message)"
+        }
     }
-    throw "Update failed. Original DLL restored when possible. $($_.Exception.Message)"
+    throw "Update failed BEFORE any game DLL change unless installation was finalized. Backup: $backup. $($_.Exception.Message)"
 } finally {
     if (Test-Path -LiteralPath $temp) {
         Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
