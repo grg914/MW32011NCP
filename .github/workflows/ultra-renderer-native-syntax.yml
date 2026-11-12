@@ -1,0 +1,29 @@
+name: Syntax-check Ultra Vulkan integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "proxy_d3d9/src/streamline_resources_x64.cpp"
+      - "proxy_d3d9/src/streamline_evaluate_x64.cpp"
+      - ".github/workflows/ultra-renderer-native-syntax.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Check modified x64 DXVK / Streamline translation units
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\streamline_resources_x64.cpp"
+          cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\streamline_evaluate_x64.cpp"
