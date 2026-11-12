@@ -1,0 +1,135 @@
+#version 450
+
+// MW3 Ultra Remaster - experimental, source-only SSGI compute kernel.
+// IMPORTANT: Requires pre-tonemap LINEAR scene radiance and a single-sampled
+// non-MSAA sampled depth image; neither can be replaced with the final HUD
+// backbuffer without breaking GI. Uses Vulkan NDC depth 0..1.
+//
+// Set 0 bindings: 0 scene radiance sampler, 1 depth sampler,
+//                 2 half-res rgba16f indirect output, 3 frame parameters.
+// Does NOT itself composite or bind any Vulkan descriptors. The host must
+// insert this pass BEFORE DLSS and before HDR tone mapping.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uSceneRadiance;
+layout(set = 0, binding = 1) uniform sampler2D uSceneDepth;
+layout(set = 0, binding = 2, rgba16f) uniform writeonly image2D uIndirect;
+
+layout(set = 0, binding = 3, std140) uniform SsgiFrame {
+    mat4 invProjection;     // inverse of actual viewport Vulkan clip-space projection
+    mat4 projection;
+    vec4 tuning;            // x = ray range view units, y = hit thickness, z = intensity, w = frame index
+    vec4 view;              // x = clip-space Y sign (+1/-1), y = indirect clamp, z/w reserved
+    ivec4 steps;            // x = rays 1..16, y = steps per ray 1..24, z/w reserved
+} frame;
+
+const float TAU = 6.28318530718;
+const float EPS = 0.00001;
+
+vec3 unproject(vec2 uv, float depth) {
+    // Depth image must contain Vulkan normalized depth [0,1], not linear Z.
+    vec4 clip = vec4(uv.x * 2.0 - 1.0,
+                     (uv.y * 2.0 - 1.0) * frame.view.x,
+                     depth, 1.0);
+    vec4 p = frame.invProjection * clip;
+    return p.xyz / max(abs(p.w), EPS) * sign(p.w);
+}
+
+bool projectView(vec3 position, out vec2 uv) {
+    vec4 p = frame.projection * vec4(position, 1.0);
+    if (p.w <= EPS) return false;
+    vec2 n = p.xy / p.w;
+    uv = vec2(n.x, n.y * frame.view.x) * 0.5 + 0.5;
+    return all(greaterThan(uv, vec2(0.004))) &&
+           all(lessThan(uv, vec2(0.996)));
+}
+
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+void main() {
+    ivec2 outputSize = imageSize(uIndirect);
+    ivec2 xy = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(xy, outputSize))) return;
+
+    vec2 uv = (vec2(xy) + 0.5) / vec2(outputSize);
+    float depth = textureLod(uSceneDepth, uv, 0.0).r;
+    if (depth <= 0.00001 || depth >= 0.99999) {
+        imageStore(uIndirect, xy, vec4(0.0));
+        return;
+    }
+
+    ivec2 fullSize = textureSize(uSceneDepth, 0);
+    vec2 duv = 1.0 / max(vec2(fullSize), vec2(1.0));
+    vec3 p = unproject(uv, depth);
+    float depthX = textureLod(uSceneDepth, uv + vec2(duv.x, 0.0), 0.0).r;
+    float depthY = textureLod(uSceneDepth, uv + vec2(0.0, duv.y), 0.0).r;
+
+    if (depthX >= 0.99999 || depthY >= 0.99999) {
+        imageStore(uIndirect, xy, vec4(0.0));
+        return;
+    }
+
+    vec3 dx = unproject(uv + vec2(duv.x, 0.0), depthX) - p;
+    vec3 dy = unproject(uv + vec2(0.0, duv.y), depthY) - p;
+    vec3 crossNormal = cross(dx, dy);
+    float normalLength = length(crossNormal);
+    if (normalLength <= EPS) {
+        imageStore(uIndirect, xy, vec4(0.0));
+        return;
+    }
+    vec3 n = crossNormal / normalLength;
+    if (dot(n, -p) < 0.0) n = -n;
+
+    vec3 helper = abs(n.z) < 0.95 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+    vec3 tangent = normalize(cross(helper, n));
+    vec3 bitangent = cross(n, tangent);
+
+    int rayCount = clamp(frame.steps.x, 1, 16);
+    int stepCount = clamp(frame.steps.y, 1, 24);
+    float maxRange = max(frame.tuning.x, 0.01);
+    float thickness = max(frame.tuning.y, 0.005);
+    float jitter = hash12(vec2(xy) + frame.tuning.w * 0.618);
+
+    vec3 indirect = vec3(0.0);
+    for (int r = 0; r < rayCount; ++r) {
+        float r01 = (float(r) + jitter) / float(rayCount);
+        float phi = TAU * fract(r01 * 1.61803398875);
+        float cosTheta = sqrt(max(0.0, 1.0 - fract(r01 + jitter * 0.17)));
+        float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+        vec3 dir = normalize(tangent * (cos(phi) * sinTheta) +
+                             bitangent * (sin(phi) * sinTheta) +
+                             n * cosTheta);
+        if (dot(dir, n) <= 0.0) continue;
+
+        for (int s = 0; s < stepCount; ++s) {
+            float t = (float(s) + 1.0 + jitter * 0.45) / (float(stepCount) + 0.45);
+            float distanceAlongRay = maxRange * min(t, 1.0);
+            vec3 rayPoint = p + dir * distanceAlongRay;
+            vec2 hitUV;
+            if (!projectView(rayPoint, hitUV)) break;
+            float hitDepth = textureLod(uSceneDepth, hitUV, 0.0).r;
+            if (hitDepth <= 0.00001 || hitDepth >= 0.99999) continue;
+            vec3 hitPoint = unproject(hitUV, hitDepth);
+
+            // Test the ray against the camera-visible surface; reject
+            // intersections thicker than a shallow scene-depth shell.
+            float dz = length(rayPoint) - length(hitPoint);
+            if (dz >= 0.0 && dz < thickness) {
+                vec3 incoming = max(textureLod(uSceneRadiance, hitUV, 0.0).rgb, vec3(0.0));
+                float cosine = max(dot(n, dir), 0.0);
+                float falloff = 1.0 / (1.0 + distanceAlongRay * distanceAlongRay);
+                indirect += incoming * cosine * falloff;
+                break;
+            }
+        }
+    }
+
+    indirect *= frame.tuning.z / float(rayCount);
+    // Half float target and noisy bright emissive objects need a bounded result.
+    indirect = clamp(indirect, vec3(0.0), vec3(max(0.0, frame.view.y)));
+    imageStore(uIndirect, xy, vec4(indirect, 1.0));
+}
