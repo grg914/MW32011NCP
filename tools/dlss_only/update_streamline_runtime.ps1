@@ -219,8 +219,10 @@ try {
             throw "Resource checksum mismatch for $($items[$i].Name). No changes installed."
         }
     }
-    Copy-Item -LiteralPath $temp -Destination $proxy -Force -ErrorAction Stop
+    # Mark the installation attempt BEFORE copying, so even a partial or
+    # interrupted Copy-Item causes the backup to be restored on exception.
     $replacementInstalled = $true
+    Copy-Item -LiteralPath $temp -Destination $proxy -Force -ErrorAction Stop
     if ((Get-FileHash -LiteralPath $proxy -Algorithm SHA256).Hash -cne
         (Get-FileHash -LiteralPath $temp -Algorithm SHA256).Hash) {
         throw "Installed proxy hash mismatch; restoring backup."
