@@ -1,0 +1,38 @@
+name: Validate Ultra Remaster shaders
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/ultra_remaster/shaders/**"
+      - ".github/workflows/ultra-remaster-shaders.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-vulkan-compute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GLSL to SPIR-V compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y glslang-tools spirv-tools
+      - name: Compile all Vulkan compute shaders
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mw3-shaders"
+          for f in tools/ultra_remaster/shaders/*.comp; do
+            b=$(basename "$f")
+            echo "GLSL -> SPIR-V: $f"
+            glslangValidator -V --target-env vulkan1.2 -S comp -o "$RUNNER_TEMP/mw3-shaders/$b.spv" "$f"
+            spirv-val --target-env vulkan1.2 "$RUNNER_TEMP/mw3-shaders/$b.spv"
+          done
+      - name: Publish compiled shader artifacts for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultra-remaster-spirv-review-only
+          path: ${{ runner.temp }}/mw3-shaders/*.spv
+          retention-days: 7
