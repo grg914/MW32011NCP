@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "tools/ultra_remaster/shaders/**"
+      - "tools/ultra_remaster/test_hdr_math.py"
       - ".github/workflows/ultra-remaster-shaders.yml"
   workflow_dispatch:
 
@@ -30,6 +31,8 @@ jobs:
             glslangValidator -V --target-env vulkan1.2 -S comp -o "$RUNNER_TEMP/mw3-shaders/$b.spv" "$f"
             spirv-val --target-env vulkan1.2 "$RUNNER_TEMP/mw3-shaders/$b.spv"
           done
+      - name: Verify HDR10 PQ transfer and primaries
+        run: python3 tools/ultra_remaster/test_hdr_math.py
       - name: Publish compiled shader artifacts for review
         uses: actions/upload-artifact@v4
         with:
