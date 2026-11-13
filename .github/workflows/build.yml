@@ -119,4 +119,18 @@ jobs:
         run: build_ncnn.bat
 
       - name: Build ${{ matrix.name }} (Release x64)
-        run: msbuild "${{ matrix.project }}" /p:Configuration=Release /p:Platform=x64 /m /warnaserror:false
+        # Override this repo's developer-specific absolute Steam installation
+        # OutDir. GitHub-hosted Windows machines have no such game folder.
+        run: msbuild "${{ matrix.project }}" /p:Configuration=Release /p:Platform=x64 /m /warnaserror:false /p:OutDir=${{ runner.temp }}\mw3_dlss_build\
+
+      # This is code-only: the vendored NVIDIA + DXVK files are intentionally
+      # absent from CI. Do NOT install it directly into MW3! See the safe
+      # packaging instructions in tools/dlss_only/README.md.
+      - name: Upload uncompromised code-only DLSS menu DLL (requires local runtime packaging)
+        if: matrix.project == 'proxy_d3d9/proxy_d3d9.vcxproj'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mw3-dlss-menu-code-only-${{ github.sha }}
+          path: ${{ runner.temp }}\mw3_dlss_build\d3d9.dll
+          if-no-files-found: error
+          retention-days: 14

@@ -21,6 +21,8 @@
 
 #include <windows.h>
 #include <cstdio>
+#include <cstring>
+#include "mod_config.h"
 #include "../resource.h"
 
 extern void LogFromController(const char* msg); // dllmain.cpp's own external-linkage logger.
@@ -127,6 +129,45 @@ bool ExtractEmbeddedStreamlineX64(char* outDir, size_t outDirSize)
     static char s_cachedDir[MAX_PATH] = {};
     if (s_extracted) {
         sprintf_s(outDir, outDirSize, "%s", s_cachedDir);
+        return true;
+    }
+
+    // Opt-in external runtime packaging: instead of modifying the unsigned
+    // proxy DLL's PE resources with UpdateResource (which caused an actual
+    // Defender Wacatac.B!ml quarantine of the RCX*.tmp intermediate), load
+    // the vendor-signed NVIDIA files as normal, separate DLLs. The same
+    // opt-in DxvkUseBundledFile=1 already requires an external DXVK build.
+    // Nothing is extracted or patched, and the default embedded path below
+    // remains untouched for existing installations. Fail closed if ANY of
+    // the four expected NVIDIA DLLs is missing from the chosen directory.
+    if (g_modConfig.dxvkUseBundledFile) {
+        char exePath[MAX_PATH] = {};
+        if (!GetModuleFileNameA(nullptr, exePath, MAX_PATH)) return false;
+        char* lastSlash = strrchr(exePath, '\\');
+        if (!lastSlash) return false;
+        *(lastSlash + 1) = '\0';
+        char looseDir[MAX_PATH] = {};
+        if (sprintf_s(looseDir, "%sstreamline\\", exePath) <= 0) return false;
+        const char* names[] = {
+            "sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "nvngx_dlss.dll"
+        };
+        for (const char* name : names) {
+            char fullPath[MAX_PATH] = {};
+            if (sprintf_s(fullPath, "%s%s", looseDir, name) <= 0) return false;
+            DWORD attrs = GetFileAttributesA(fullPath);
+            if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+                char msg[480] = {};
+                sprintf_s(msg, "[streamline] DxvkUseBundledFile=1: missing external NVIDIA "
+                    "DLL '%s'; refusing to load an incomplete Streamline runtime.", fullPath);
+                LogFromController(msg);
+                return false;
+            }
+        }
+        sprintf_s(outDir, outDirSize, "%s", looseDir);
+        sprintf_s(s_cachedDir, "%s", looseDir);
+        s_extracted = true;
+        LogFromController("[streamline] Using user-installed external NVIDIA "
+            "Streamline DLLs, without modifying proxy d3d9.dll resources.");
         return true;
     }
 

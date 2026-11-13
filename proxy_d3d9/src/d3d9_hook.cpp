@@ -1463,6 +1463,73 @@ extern "C" void HookD3D9CreateDevice(void* realD3D9)
     InstallGetCursorPosHook();
     InstallMouseCaptureSuppressionHooks();
     void** d3d9Vtable = *reinterpret_cast<void***>(realD3D9);
+    // Diagnose the ACTUAL D3D9 modes returned by the selected DXVK build,
+    // before the game registers its r_mode enum. This is read-only and executes
+    // once per D3D9 interface, not each frame. Do not assume that a 4K Windows
+    // desktop implies DXVK enumerated the same mode.
+#if defined(_M_X64) || defined(_WIN64)
+    if (g_modConfig.streamlineEnabled && IsDxvkActive() &&
+        GetDetectedGameExecutable() == GameExecutable::SP) {
+        // Standard IDirect3D9 vtable indices (base IUnknown slots included).
+        constexpr int kModeCountSlot = 6;
+        constexpr int kEnumModesSlot = 7;
+        constexpr DWORD kD3DFMT_X8R8G8B8 = 22;
+        constexpr DWORD kD3DFMT_A8R8G8B8 = 21;
+        struct DisplayModeLocal {
+            UINT Width;
+            UINT Height;
+            UINT RefreshRate;
+            DWORD Format;
+        };
+        static_assert(sizeof(DisplayModeLocal) == 16, "D3DDISPLAYMODE ABI mismatch");
+        using GetModeCountFn = UINT(WINAPI*)(void*, UINT, DWORD);
+        using EnumModesFn = HRESULT(WINAPI*)(void*, UINT, DWORD, UINT, DisplayModeLocal*);
+        auto getCount = reinterpret_cast<GetModeCountFn>(d3d9Vtable[kModeCountSlot]);
+        auto enumModes = reinterpret_cast<EnumModesFn>(d3d9Vtable[kEnumModesSlot]);
+
+        DEVMODEW desktop{};
+        desktop.dmSize = sizeof(desktop);
+        const bool desktopFound =
+            EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &desktop) != 0;
+        const DWORD wantedW = desktopFound ? desktop.dmPelsWidth : 0;
+        const DWORD wantedH = desktopFound ? desktop.dmPelsHeight : 0;
+        const DWORD formats[] = { kD3DFMT_X8R8G8B8, kD3DFMT_A8R8G8B8 };
+        for (DWORD fmt : formats) {
+            UINT count = getCount(realD3D9, 0, fmt);
+            UINT nativeCount = 0;
+            UINT fourKCount = 0;
+            UINT maxW = 0, maxH = 0;
+            // Bound enumeration of a possibly corrupt driver result. Count
+            // still reports the original result so truncation is observable.
+            const UINT bounded = count > 4096 ? 4096 : count;
+            for (UINT index = 0; index < bounded; ++index) {
+                DisplayModeLocal mode{};
+                if (FAILED(enumModes(realD3D9, 0, fmt, index, &mode)))
+                    continue;
+                if (wantedW && mode.Width == wantedW && mode.Height == wantedH)
+                    ++nativeCount;
+                if (mode.Width == 3840 && mode.Height == 2160)
+                    ++fourKCount;
+                if (static_cast<uint64_t>(mode.Width) * mode.Height >
+                    static_cast<uint64_t>(maxW) * maxH) {
+                    maxW = mode.Width;
+                    maxH = mode.Height;
+                }
+            }
+            char diagnostic[360];
+            sprintf_s(diagnostic,
+                "[dlss-only-mode-diag] desktop=%lux%lu refresh=%luHz "
+                "D3D9 format=%lu modeCount=%u enumerated=%u nativeMatches=%u "
+                "fourKMatches=%u largestMode=%ux%u "
+                "(d3d9.modeCountCompatibility requested when DLSS is on).",
+                static_cast<unsigned long>(wantedW), static_cast<unsigned long>(wantedH),
+                desktopFound ? static_cast<unsigned long>(desktop.dmDisplayFrequency) : 0UL,
+                static_cast<unsigned long>(fmt), count, bounded, nativeCount,
+                fourKCount, maxW, maxH);
+            LogFromController(diagnostic);
+        }
+    }
+#endif
     void* realCreateDevice = d3d9Vtable[kCreateDeviceVtableIndex];
 
     MH_STATUS s = MH_CreateHook(realCreateDevice, reinterpret_cast<void*>(&Hook_CreateDevice),

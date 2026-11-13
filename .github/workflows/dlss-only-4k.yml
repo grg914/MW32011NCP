@@ -1,0 +1,63 @@
+name: Validate DLSS-only native 4K compatibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "proxy_d3d9/src/dllmain.cpp"
+      - "proxy_d3d9/src/d3d9_hook.cpp"
+      - "proxy_d3d9/src/overlay_hud.cpp"
+      - "tools/dlss_only/**"
+      - ".github/workflows/dlss-only-4k.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-msvc-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Syntax check modified proxy units (no graphics installation needed)
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\d3d9_hook.cpp"
+          cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\dllmain.cpp"
+          cl /nologo /std:c++17 /W3 /EHsc /Zs /I "dxvk\include\vulkan\include" /I "proxy_d3d9\third_party\minhook\include" "proxy_d3d9\src\overlay_hud.cpp"
+
+      - name: Win32 RT_RCDATA update smoke test (64MB source DLL)
+        shell: pwsh
+        run: |
+          & .\tools\dlss_only\test_resource_update.ps1
+      - name: Patch official MW3NCP 0.0.3 x64 proxy with synthetic large Streamline payloads
+        shell: pwsh
+        run: |
+          & .\tools\dlss_only\test_resource_update_release.ps1
+
+  test-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse runtime update and in-game-menu packaging scripts (Windows PowerShell syntax)
+        shell: pwsh
+        run: |
+          foreach ($path in @('.\\tools\\dlss_only\\update_streamline_runtime.ps1', '.\\tools\\dlss_only\\install_menu_from_ci.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | Format-List | Out-String | Write-Host
+              throw "PowerShell syntax errors in $path"
+            }
+            Write-Host "PASS parse: $path"
+          }
+      - name: Dry-run, archive validation, backup and INI smoke test
+        shell: pwsh
+        run: |
+          & .\tools\dlss_only\test_install.ps1

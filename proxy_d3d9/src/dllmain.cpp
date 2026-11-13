@@ -562,15 +562,20 @@ bool TryLoadVendoredDxvk()
     // patch) the same way, so both patches are active together whenever
     // Streamline is the reason Vulkan mode is being used at all.
     if (g_modConfig.streamlineEnabled) {
+        // Always set the DXVK mode-list workaround before loading DXVK,
+        // even when NVIDIA Streamline extraction is unavailable. That
+        // failure should not silently restore the 640x480 fallback.
+        SetEnvironmentVariableA("DXVK_CONFIG",
+            "dxvk.enableNvCudaInteropNative=True; d3d9.modeCountCompatibility=True");
         char slDir[MAX_PATH];
         if (ExtractEmbeddedStreamlineX64(slDir, sizeof(slDir))) {
             char slInterposerPath[MAX_PATH];
             sprintf_s(slInterposerPath, "%ssl.interposer.dll", slDir);
             SetEnvironmentVariableA("DXVK_VULKAN_LOADER_OVERRIDE", slInterposerPath);
-            SetEnvironmentVariableA("DXVK_CONFIG", "dxvk.enableNvCudaInteropNative=True");
             char buf[500];
             sprintf_s(buf, "[graphics-api] StreamlineEnabled=1 -- DXVK_VULKAN_LOADER_OVERRIDE set to "
-                "'%s', DXVK_CONFIG set to enable the NVX CUDA interop extensions DLSS needs.",
+                "'%s', DXVK_CONFIG set for NVX CUDA interop + D3D9 desktop-mode compatibility "
+                "(4K/1440p display-list fix, no forced resolution).",
                 slInterposerPath);
             Log(buf);
         } else {
